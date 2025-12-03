@@ -3,3 +3,6 @@
 
 # Output directory
 result_batch/
+
+# Python cache
+__pycache__/
