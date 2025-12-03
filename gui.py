@@ -61,7 +61,11 @@ def launch_and_get_files():
     root.mainloop()
     
     selected_files = app.file_paths
-    root.destroy()
+    try:
+        root.destroy()
+    except tk.TclError:
+        # This can happen if the user closes the window manually.
+        pass
     return selected_files
 
 
