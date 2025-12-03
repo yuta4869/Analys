@@ -220,6 +220,34 @@ def calculate_hrv_indices(file_path, label, fs=130):
 # ---------------------------------------------------------
 # 3. バッチ解析実行ロジック
 # ---------------------------------------------------------
+def save_timeseries_plot(df, label, output_dir):
+    """
+    Creates and saves a time-series plot for LF/HF and RMSSD.
+    """
+    print(f"  -> Creating time-series plot for {label}...")
+    fig, axes = plt.subplots(2, 1, figsize=(12, 8), sharex=True)
+    fig.suptitle(f'Time-Series Analysis: {label}', fontsize=16)
+
+    # Plot LF/HF
+    axes[0].plot(df['Time'], df['LF/HF'], label='LF/HF', color='dodgerblue')
+    axes[0].set_ylabel('LF/HF')
+    axes[0].grid(True, linestyle='--', alpha=0.6)
+    axes[0].legend()
+
+    # Plot RMSSD
+    axes[1].plot(df['Time'], df['RMSSD'], label='RMSSD', color='limegreen')
+    axes[1].set_ylabel('RMSSD (ms)')
+    axes[1].set_xlabel('Time (s)')
+    axes[1].grid(True, linestyle='--', alpha=0.6)
+    axes[1].legend()
+
+    plt.tight_layout(rect=[0, 0.03, 1, 0.95]) # Adjust layout to make room for suptitle
+    
+    save_path = os.path.join(output_dir, f"{label}_timeseries.png")
+    plt.savefig(save_path, dpi=300)
+    plt.close(fig)
+    print(f"  -> Time-series plot saved: {os.path.basename(save_path)}")
+
 
 def run_batch_analysis(files_map, base_dir):
     """
@@ -250,6 +278,9 @@ def run_batch_analysis(files_map, base_dir):
             sliding_output_path = os.path.join(output_dir, f"{label}_result.xlsx")
             sliding_df.to_excel(sliding_output_path, index=False)
             print(f"  -> 時系列結果を保存: {os.path.basename(sliding_output_path)}")
+
+            # 時系列グラフの保存
+            save_timeseries_plot(sliding_df, label, output_dir)
 
             # 全体LF/HFの個別保存
             overall_output_path = os.path.join(output_dir, f"{label}_resultLFHF5min.xlsx")
