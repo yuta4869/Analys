@@ -1,3 +1,4 @@
+import os
 import tkinter as tk
 from tkinter import filedialog, messagebox
 
@@ -9,17 +10,20 @@ class AnalysisGUI:
 
         self.file_paths = {}
         self.labels = ["Fixed", "Sin", "HRF"]
-        self.entries = {}
+        self.path_labels = {}
 
         # Create input rows
         for i, label_text in enumerate(self.labels):
-            label = tk.Label(master, text=f"{label_text}:")
-            label.grid(row=i, column=0, padx=10, pady=10, sticky="w")
+            # Condition label (e.g., "Fixed:")
+            condition_label = tk.Label(master, text=f"{label_text}:")
+            condition_label.grid(row=i, column=0, padx=10, pady=10, sticky="w")
 
-            entry = tk.Entry(master, width=50)
-            entry.grid(row=i, column=1, padx=10, pady=10)
-            self.entries[label_text] = entry
+            # Label to display selected file path
+            path_label = tk.Label(master, text="No file selected.", width=40, anchor="w", fg="grey")
+            path_label.grid(row=i, column=1, padx=10, pady=10, sticky="w")
+            self.path_labels[label_text] = path_label
 
+            # Browse button
             browse_button = tk.Button(master, text="Browse...", command=lambda l=label_text: self.browse_file(l))
             browse_button.grid(row=i, column=2, padx=10, pady=10)
 
@@ -33,23 +37,16 @@ class AnalysisGUI:
             filetypes=[('CSV files', '*.csv'), ('All files', '*.*')]
         )
         if file_path:
-            self.entries[label].delete(0, tk.END)
-            self.entries[label].insert(0, file_path)
             self.file_paths[label] = file_path
+            # Display just the filename
+            filename = os.path.basename(file_path)
+            self.path_labels[label].config(text=filename, fg="black")
 
     def run_analysis(self):
-        # Final check of file paths from entries before closing
-        final_paths = {}
-        for label, entry in self.entries.items():
-            path = entry.get()
-            if path:
-                final_paths[label] = path
-        
-        if not final_paths:
+        if not self.file_paths:
             messagebox.showwarning("No Files", "No files were selected. The program will exit.")
         
-        self.file_paths = final_paths
-        self.master.quit() # Use quit() to end the mainloop and allow return
+        self.master.quit()
 
 def launch_and_get_files():
     """
@@ -61,16 +58,14 @@ def launch_and_get_files():
     """
     root = tk.Tk()
     app = AnalysisGUI(root)
-    root.mainloop() # This blocks until master.quit() is called
+    root.mainloop()
     
-    # After mainloop ends, destroy the window and return the paths
     selected_files = app.file_paths
     root.destroy()
     return selected_files
 
 
 if __name__ == '__main__':
-    # Example of how to use the function
     print("Launching GUI to select files...")
     file_map = launch_and_get_files()
 
