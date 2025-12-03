@@ -8,7 +8,7 @@ The main entry point for the application is `Main.py`, which launches a graphica
 
 ## Features
 
--   **GUI File Selection:** Easily select one or more analysis files through a user-friendly dialog.
+-   **Labeled GUI Inputs:** A dedicated graphical interface to select specific files for "Fixed", "Sin", and "HRF" conditions.
 -   **ECG Processing:** Reads ECG data from CSV files and applies a bandpass filter.
 -   **R-Peak Detection:** Identifies R-peaks in the ECG signal to calculate RRI.
 -   **HRV Metrics:**
@@ -17,21 +17,13 @@ The main entry point for the application is `Main.py`, which launches a graphica
 -   **Sliding Window Analysis:** Performs analysis over a sliding window to observe changes over time.
 -   **Excel Output:** Saves the analysis results, including time-series data and overall metrics, into Excel files.
 
-## Installation
-
-The script requires several Python libraries. You can install them using pip:
-
-```bash
-pip install numpy pandas matplotlib scipy openpyxl
-```
-
 ## Usage
 
 This application can be run in two ways:
 
 ### 1. Using the GUI (Recommended)
 
-The main entry point is `Main.py`, which provides a graphical user interface to select your input files.
+The main entry point is `Main.py`, which provides a graphical user interface to assign input files to specific analysis conditions.
 
 1.  **Run the Main Script:** Execute `Main.py` from your terminal:
 
@@ -39,9 +31,11 @@ The main entry point is `Main.py`, which provides a graphical user interface to 
     python Main.py
     ```
 
-2.  **Select Files:** A file dialog will appear. Select one or more ECG CSV files that you want to analyze.
+2.  **Assign Files:** A window will appear with three rows: "Fixed", "Sin", and "HRF".
+    -   Click the "Browse..." button for each condition to select the corresponding ECG CSV file. You can assign files to one, two, or all three conditions.
+    -   Click the "Run Analysis" button to start the process.
 
-3.  **Check Results:** The analysis will run automatically, and the output Excel files will be saved in a `result_batch` directory within the project folder.
+3.  **Check Results:** The analysis will run on the assigned files, and the output Excel files will be saved in a `result_batch` directory within the project folder.
 
 ### 2. Using the Command Line (Advanced)
 
