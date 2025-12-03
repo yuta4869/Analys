@@ -2,12 +2,13 @@
 
 This project provides Python scripts to analyze Heart Rate Variability (HRV) from ECG data stored in CSV files. It processes the raw ECG signal to calculate R-R intervals (RRI) and subsequently derives frequency-domain (LF/HF) and time-domain (RMSSD) HRV metrics.
 
-## Main Script
+## Main Entrypoint
 
-The primary script for analysis is `Analyzer.py`.
+The main entry point for the application is `Main.py`, which launches a graphical interface for file selection.
 
 ## Features
 
+-   **GUI File Selection:** Easily select one or more analysis files through a user-friendly dialog.
 -   **ECG Processing:** Reads ECG data from CSV files and applies a bandpass filter.
 -   **R-Peak Detection:** Identifies R-peaks in the ECG signal to calculate RRI.
 -   **HRV Metrics:**
@@ -26,19 +27,30 @@ pip install numpy pandas matplotlib scipy openpyxl
 
 ## Usage
 
-1.  **Configure Input Files:** Open the `Analyzer.py` script and modify the `files_map` dictionary to specify the labels and absolute paths of the CSV files you wish to analyze.
+This application can be run in two ways:
 
-    ```python
-    files_map = {
-        "Label1": "/path/to/your/ecg_data_1.csv",
-        "Label2": "/path/to/your/ecg_data_2.csv",
-    }
+### 1. Using the GUI (Recommended)
+
+The main entry point is `Main.py`, which provides a graphical user interface to select your input files.
+
+1.  **Run the Main Script:** Execute `Main.py` from your terminal:
+
+    ```bash
+    python Main.py
     ```
 
-2.  **Run the Script:** Execute the script from your terminal:
+2.  **Select Files:** A file dialog will appear. Select one or more ECG CSV files that you want to analyze.
+
+3.  **Check Results:** The analysis will run automatically, and the output Excel files will be saved in a `result_batch` directory within the project folder.
+
+### 2. Using the Command Line (Advanced)
+
+You can still run the analysis by modifying the `Analyzer.py` script directly. This is useful for environments without a graphical interface.
+
+1.  **Configure Input Files:** Open `Analyzer.py` and modify the `default_files_map` dictionary with the absolute paths to your files.
+
+2.  **Run the Script:**
 
     ```bash
     python Analyzer.py
     ```
-
-3.  **Check Results:** The output Excel files will be saved in a `result_batch` directory within the project folder.

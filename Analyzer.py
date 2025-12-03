@@ -218,27 +218,20 @@ def calculate_hrv_indices(file_path, label, fs=130):
     return sliding_result_df, overall_lf_hf_val
 
 # ---------------------------------------------------------
-# 3. メイン実行ブロック
+# 3. バッチ解析実行ロジック
 # ---------------------------------------------------------
 
-if __name__ == "__main__":
-    # ▼▼▼ 環境設定: ここを自分のPCのパスに合わせて変更してください ▼▼▼
-    base_dir = "/Users/user/Research/Analys"  # ファイルがあるフォルダ
-    output_dir = os.path.join(base_dir, "result_batch") # 結果を出力するフォルダ
+def run_batch_analysis(files_map, base_dir):
+    """
+    指定されたファイルマップに基づいてバッチ解析を実行し、結果をExcelファイルに保存する。
     
-    # 入力ファイル名（フォルダ内にあるファイル名を指定）
-    files_map = {
-        "Fixed": "/Users/user/Documents/MHS2025/kawato/h10_ecg_session_20250728_162632.csv",
-        "HRF":   "/Users/user/Documents/MHS2025/kawato/h10_ecg_session_20250728_161705.csv",
-        "Sin":   "/Users/user/Documents/MHS2025/kawato/h10_ecg_session_20250728_160807.csv"
-    }
-    # ▲▲▲ 設定ここまで ▲▲▲
-
-    # 出力フォルダ作成
+    :param files_map: 解析対象のファイルを {label: file_path} の形式で格納した辞書
+    :param base_dir: 結果を出力する基準ディレクトリ
+    """
+    output_dir = os.path.join(base_dir, "result_batch")
     os.makedirs(output_dir, exist_ok=True)
     
     combined_df = None
-    processed_files = []
 
     print("=== バッチ解析を開始します ===")
 
@@ -253,33 +246,21 @@ if __name__ == "__main__":
         sliding_df, overall_lfhf = calculate_hrv_indices(file_path, label)
         
         if sliding_df is not None and not sliding_df.empty:
-            # ---------------------------------------------------
-            # 1. 時系列データの個別保存 (例: Fixed_result.xlsx)
-            # ---------------------------------------------------
+            # 時系列データの個別保存
             sliding_output_path = os.path.join(output_dir, f"{label}_result.xlsx")
             sliding_df.to_excel(sliding_output_path, index=False)
             print(f"  -> 時系列結果を保存: {os.path.basename(sliding_output_path)}")
 
-            # ---------------------------------------------------
-            # 2. 全体(5分)LF/HFの個別保存 (例: Fixed_resultLFHF5min.xlsx)
-            # ---------------------------------------------------
+            # 全体LF/HFの個別保存
             overall_output_path = os.path.join(output_dir, f"{label}_resultLFHF5min.xlsx")
-            
-            # DataFrameを作成して保存
-            overall_df = pd.DataFrame({
-                'File Name': [filename],
-                'LF/HF (Overall)': [overall_lfhf]
-            })
+            overall_df = pd.DataFrame({'File Name': [filename], 'LF/HF (Overall)': [overall_lfhf]})
             overall_df.to_excel(overall_output_path, index=False)
             print(f"  -> 全体平均結果を保存: {os.path.basename(overall_output_path)}")
             
-            # ---------------------------------------------------
-            # 3. 結合用データの準備 (列名を変更: LF/HF -> Fixed_LF/HF)
-            # ---------------------------------------------------
+            # 結合用データの準備
             df_renamed = sliding_df.copy()
             df_renamed.columns = ['Time', f'{label}_LF/HF', f'{label}_RMSSD']
             
-            # マージ処理 (Timeをキーにして外部結合)
             if combined_df is None:
                 combined_df = df_renamed
             else:
@@ -287,12 +268,9 @@ if __name__ == "__main__":
         else:
             print(f"  -> {label} の解析結果が得られませんでした。")
 
-    # 4. 結合ファイルの保存
+    # 結合ファイルの保存
     if combined_df is not None:
-        # Timeでソート
         combined_df.sort_values('Time', inplace=True)
-        
-        # 列の並び順を整理 (Time, Fixed..., HRF..., Sin...)
         cols = ['Time']
         for label in files_map.keys():
             if f'{label}_LF/HF' in combined_df.columns:
@@ -300,8 +278,6 @@ if __name__ == "__main__":
                 cols.append(f'{label}_RMSSD')
         
         combined_df = combined_df[cols]
-        
-        # ファイル名を指定のものに変更
         combined_output_path = os.path.join(output_dir, "Combined_HRV_Analysis.xlsx")
         combined_df.to_excel(combined_output_path, index=False)
         print(f"\n=== 全データの結合ファイルを保存しました ===")
@@ -310,3 +286,22 @@ if __name__ == "__main__":
         print("\n有効な解析結果が1つもありませんでした。")
 
     print("\n処理完了。")
+
+# ---------------------------------------------------------
+# 4. メイン実行ブロック
+# ---------------------------------------------------------
+
+if __name__ == "__main__":
+    # このスクリプトを直接実行した場合のデフォルト動作
+    # ▼▼▼ 環境設定: ここを自分のPCのパスに合わせて変更してください ▼▼▼
+    base_dir_main = os.path.dirname(os.path.abspath(__file__))
+    
+    # 入力ファイル名（フォルダ内にあるファイル名を指定）
+    default_files_map = {
+        "Fixed": "/Users/user/Documents/MHS2025/kawato/h10_ecg_session_20250728_162632.csv",
+        "HRF":   "/Users/user/Documents/MHS2025/kawato/h10_ecg_session_20250728_161705.csv",
+        "Sin":   "/Users/user/Documents/MHS2025/kawato/h10_ecg_session_20250728_160807.csv"
+    }
+    # ▲▲▲ 設定ここまで ▲▲▲
+
+    run_batch_analysis(default_files_map, base_dir_main)
