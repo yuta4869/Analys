@@ -23,6 +23,7 @@ conditions = {
     'HRF': '調整会話',
     'Sin': '正弦波'
 }
+CONDITION_ORDER = ['Fixed', 'HRF', 'Sin']
 
 # グラフの色設定
 colors = {
@@ -84,7 +85,10 @@ def create_boxplot_for_metric(df, metric_suffix, title, output_filename, output_
     
     # 1. 箱ひげ図
     # showfliers=False: 箱ひげ図には外れ値を表示せず、全体傾向を強調する
-    palette = _condition_palette(df_melted['Condition'].unique())
+    order_labels = [conditions[key] for key in CONDITION_ORDER if conditions[key] in set(df_melted['Condition'])]
+    if not order_labels:
+        order_labels = list(df_melted['Condition'].unique())
+    palette = _condition_palette(order_labels)
     sns.boxplot(
         x='Condition', 
         y='Value', 
@@ -92,11 +96,12 @@ def create_boxplot_for_metric(df, metric_suffix, title, output_filename, output_
         palette=palette, 
         ax=ax, 
         showfliers=False,
-        width=0.5
+        width=0.5,
+        order=order_labels
     )
     
     # 凡例の作成
-    legend_patches = [mpatches.Patch(color=color, label=label) for label, color in palette.items() if label in plot_data.columns]
+    legend_patches = [mpatches.Patch(color=palette[label], label=label) for label in order_labels]
     ax.legend(handles=legend_patches, title="条件", loc='upper right')
 
     # ラベルとタイトルの設定
@@ -171,7 +176,11 @@ def _create_boxplot_for_long_df(df, metric_col, title, output_filename, output_d
         return None
 
     plot_df['ConditionLabel'] = plot_df['Condition'].map(conditions).fillna(plot_df['Condition'])
-    palette = _condition_palette(plot_df['ConditionLabel'].unique())
+    available_conditions = [key for key in CONDITION_ORDER if key in set(plot_df['Condition'])]
+    order_labels = [conditions[key] for key in available_conditions]
+    if not order_labels:
+        order_labels = list(plot_df['ConditionLabel'].unique())
+    palette = _condition_palette(order_labels)
 
     fig, ax = plt.subplots(figsize=(10, 7))
     sns.boxplot(
@@ -181,10 +190,11 @@ def _create_boxplot_for_long_df(df, metric_col, title, output_filename, output_d
         palette=palette,
         ax=ax,
         showfliers=False,
-        width=0.5
+        width=0.5,
+        order=order_labels
     )
 
-    legend_patches = [mpatches.Patch(color=palette[label], label=label) for label in plot_df['ConditionLabel'].unique()]
+    legend_patches = [mpatches.Patch(color=palette[label], label=label) for label in order_labels]
     ax.legend(handles=legend_patches, title="条件", loc='upper right')
     ax.set_title(title, fontsize=16)
     ax.set_xlabel("条件", fontsize=14)
