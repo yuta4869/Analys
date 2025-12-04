@@ -4,74 +4,54 @@ from tkinter import filedialog, messagebox
 
 
 class AnalysisGUI:
-    def __init__(self, master, run_callback, boxplot_callback):
+    def __init__(self, master, run_callback):
         self.master = master
         self.run_callback = run_callback
-        self.boxplot_callback = boxplot_callback
 
-        master.title("HRV Analysis File Selector")
-        master.geometry("560x260")
+        self.master.title("HRV Analysis File Selector")
+        self.master.geometry("600x220")
 
-        self.file_paths = {}
-        self.labels = ["Fixed", "Sin", "HRF"]
-        self.path_labels = {}
-        self.status_var = tk.StringVar(value="解析ファイルを選択してください。")
+        self.input_dir = None
+        self.path_var = tk.StringVar(value="入力フォルダが選択されていません。")
+        self.status_var = tk.StringVar(value="フォルダを選択して解析を開始してください。")
 
         self._build_widgets()
 
     def _build_widgets(self):
-        for i, label_text in enumerate(self.labels):
-            label = tk.Label(self.master, text=f"{label_text}:")
-            label.grid(row=i, column=0, padx=10, pady=10, sticky="w")
+        label = tk.Label(self.master, text="入力フォルダ:")
+        label.grid(row=0, column=0, padx=10, pady=15, sticky="w")
 
-            path_label = tk.Label(self.master, text="No file selected.", width=40, anchor="w", fg="grey")
-            path_label.grid(row=i, column=1, padx=10, pady=10, sticky="w")
-            self.path_labels[label_text] = path_label
+        path_label = tk.Label(self.master, textvariable=self.path_var, width=45, anchor="w", fg="grey")
+        path_label.grid(row=0, column=1, padx=10, pady=15, sticky="w")
 
-            button = tk.Button(
-                self.master,
-                text="Browse...",
-                command=lambda l=label_text: self._browse_file(l)
-            )
-            button.grid(row=i, column=2, padx=10, pady=10)
+        browse_button = tk.Button(self.master, text="Browse...", command=self._browse_folder)
+        browse_button.grid(row=0, column=2, padx=10, pady=15)
 
         self.run_button = tk.Button(self.master, text="Run Analysis", command=self.run_analysis)
-        self.run_button.grid(row=len(self.labels), column=1, pady=(5, 5))
-
-        self.boxplot_button = tk.Button(
-            self.master,
-            text="箱ひげ図を作成",
-            state=tk.DISABLED,
-            command=self.create_boxplots
-        )
-        self.boxplot_button.grid(row=len(self.labels) + 1, column=1, pady=(0, 5))
+        self.run_button.grid(row=1, column=1, pady=(5, 5))
 
         status_label = tk.Label(
             self.master,
             textvariable=self.status_var,
-            wraplength=480,
+            wraplength=520,
             justify="left",
             fg="blue"
         )
-        status_label.grid(row=len(self.labels) + 2, column=0, columnspan=3, padx=10, sticky="w")
+        status_label.grid(row=2, column=0, columnspan=3, padx=10, sticky="w")
 
         self.exit_button = tk.Button(self.master, text="終了", command=self.master.destroy)
-        self.exit_button.grid(row=len(self.labels) + 3, column=1, pady=(5, 10))
+        self.exit_button.grid(row=3, column=1, pady=(10, 10))
 
-    def _browse_file(self, label):
-        file_path = filedialog.askopenfilename(
-            title=f"Select file for {label}",
-            filetypes=[('CSV files', '*.csv'), ('All files', '*.*')]
-        )
-        if file_path:
-            self.file_paths[label] = file_path
-            filename = os.path.basename(file_path)
-            self.path_labels[label].config(text=filename, fg="black")
-            self.status_var.set("解析ファイルを選択しました。Run Analysis を押してください。")
+    def _browse_folder(self):
+        folder_path = filedialog.askdirectory(title="解析対象のフォルダを選択してください")
+        if folder_path:
+            self.input_dir = folder_path
+            self.path_var.set(folder_path)
+            self.status_var.set("Run Analysis を押して解析を開始してください。")
 
     def run_analysis(self):
-        if not self.file_paths:
-            messagebox.showwarning("No Files", "解析対象のファイルを選択してください。")
+        if not self.input_dir:
+            messagebox.showwarning("フォルダ未選択", "まず解析対象のフォルダを選択してください。")
             return
 
         self.run_button.config(state=tk.DISABLED)
@@ -79,47 +59,39 @@ class AnalysisGUI:
         self.master.update_idletasks()
 
         try:
-            self.run_callback(self.file_paths)
+            summary = self.run_callback(self.input_dir)
+        except FileNotFoundError as exc:
+            messagebox.showwarning("解析不可", str(exc))
+            self.status_var.set(str(exc))
+            self.run_button.config(state=tk.NORMAL)
+            return
         except Exception as exc:
             messagebox.showerror("解析エラー", f"解析中にエラーが発生しました。\n{exc}")
-            self.run_button.config(state=tk.NORMAL)
             self.status_var.set("解析に失敗しました。ログを確認してください。")
+            self.run_button.config(state=tk.NORMAL)
             return
 
-        self.status_var.set("解析が完了しました。箱ひげ図を作成できます。")
-        self.boxplot_button.config(state=tk.NORMAL)
+        processed = summary.get("processed", 0)
+        skipped = summary.get("skipped", {})
+        result_root = summary.get("result_root")
+
+        message_lines = [f"{processed}名の被験者を処理しました。"]
+        if skipped:
+            detail_lines = []
+            for subject_id, reasons in skipped.items():
+                detail_lines.append(f"  - {subject_id}: {', '.join(reasons)}")
+            message_lines.append("以下の被験者はスキップされました:")
+            message_lines.extend(detail_lines)
+
+        if result_root:
+            message_lines.append(f"出力フォルダ: {result_root}")
+
+        messagebox.showinfo("解析完了", "\n".join(message_lines))
+        self.status_var.set("解析が完了しました。")
         self.run_button.config(state=tk.NORMAL)
 
-    def create_boxplots(self):
-        self.boxplot_button.config(state=tk.DISABLED)
-        self.status_var.set("箱ひげ図を作成しています...")
-        self.master.update_idletasks()
 
-        try:
-            saved_files = self.boxplot_callback()
-        except FileNotFoundError as exc:
-            messagebox.showerror("ファイルなし", str(exc))
-            self.status_var.set("Combined_HRV_Analysis.xlsx が見つかりません。解析を再実行してください。")
-            self.boxplot_button.config(state=tk.NORMAL)
-            return
-        except Exception as exc:
-            messagebox.showerror("グラフエラー", f"箱ひげ図の作成に失敗しました。\n{exc}")
-            self.status_var.set("箱ひげ図の作成に失敗しました。")
-            self.boxplot_button.config(state=tk.NORMAL)
-            return
-
-        if saved_files:
-            message = "箱ひげ図を作成しました:\n" + "\n".join(saved_files)
-            messagebox.showinfo("完了", message)
-            self.status_var.set("箱ひげ図の作成が完了しました。")
-        else:
-            messagebox.showwarning("結果なし", "保存された箱ひげ図がありませんでした。")
-            self.status_var.set("箱ひげ図の保存に失敗しました。")
-
-        self.boxplot_button.config(state=tk.NORMAL)
-
-
-def launch_ui(run_callback, boxplot_callback):
+def launch_ui(run_callback):
     root = tk.Tk()
-    app = AnalysisGUI(root, run_callback, boxplot_callback)
+    app = AnalysisGUI(root, run_callback)
     root.mainloop()

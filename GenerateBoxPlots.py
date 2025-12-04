@@ -76,7 +76,7 @@ def create_boxplot_for_metric(df, metric_suffix, title, output_filename, output_
     fig, ax = plt.subplots(figsize=(10, 7))
     
     # 1. 箱ひげ図
-    # showfliers=False: 外れ値を箱ひげ図自体では非表示にする（ストリッププロットで重ねるため）
+    # showfliers=False: 箱ひげ図には外れ値を表示せず、全体傾向を強調する
     sns.boxplot(
         x='Condition', 
         y='Value', 
@@ -87,19 +87,6 @@ def create_boxplot_for_metric(df, metric_suffix, title, output_filename, output_
         width=0.5
     )
     
-    # 2. ストリッププロット（データ点を重ねて表示）
-    # jitter=True: 点が重ならないように少し散らす
-    sns.stripplot(
-        x='Condition', 
-        y='Value', 
-        data=df_melted, 
-        color='black', 
-        alpha=0.3, # 透明度
-        jitter=True, 
-        size=3,
-        ax=ax
-    )
-
     # 凡例の作成
     legend_patches = [mpatches.Patch(color=color, label=label) for label, color in colors.items() if label in plot_data.columns]
     ax.legend(handles=legend_patches, title="条件", loc='upper right')

@@ -249,14 +249,13 @@ def save_timeseries_plot(df, label, output_dir):
     print(f"  -> Time-series plot saved: {os.path.basename(save_path)}")
 
 
-def run_batch_analysis(files_map, base_dir):
+def run_batch_analysis(files_map, output_dir):
     """
     指定されたファイルマップに基づいてバッチ解析を実行し、結果をExcelファイルに保存する。
     
     :param files_map: 解析対象のファイルを {label: file_path} の形式で格納した辞書
-    :param base_dir: 結果を出力する基準ディレクトリ
+    :param output_dir: 結果を出力するディレクトリ
     """
-    output_dir = os.path.join(base_dir, "result_batch")
     os.makedirs(output_dir, exist_ok=True)
     
     combined_df = None
@@ -335,4 +334,5 @@ if __name__ == "__main__":
     }
     # ▲▲▲ 設定ここまで ▲▲▲
 
-    run_batch_analysis(default_files_map, base_dir_main)
+    default_output_dir = os.path.join(base_dir_main, "result_batch")
+    run_batch_analysis(default_files_map, default_output_dir)
