@@ -115,6 +115,7 @@ class AnalysisGUI:
         subjects = summary.get('subjects', [])
         output_path = summary.get('output_path')
         rows = summary.get('rows')
+        boxplots = summary.get('boxplots', [])
 
         message_lines = ["統合処理が完了しました。"]
         if subjects:
@@ -123,6 +124,9 @@ class AnalysisGUI:
             message_lines.append(f"総データ行数: {rows}")
         if output_path:
             message_lines.append(f"保存先: {output_path}")
+        if boxplots:
+            message_lines.append("箱ひげ図:")
+            message_lines.extend([f"  - {path}" for path in boxplots])
 
         messagebox.showinfo("統合完了", "\n".join(message_lines))
         self.status_var.set("全被験者統合が完了しました。")

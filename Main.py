@@ -5,7 +5,7 @@ from collections import defaultdict
 import pandas as pd
 
 from Analyzer import run_batch_analysis
-from GenerateBoxPlots import generate_box_plots
+from GenerateBoxPlots import generate_box_plots, generate_box_plots_from_long_df
 from gui import launch_ui
 
 
@@ -97,10 +97,14 @@ def main():
         output_path = os.path.join(result_root, "Combined_AllSubjects.xlsx")
         combined_df.to_excel(output_path, index=False)
 
+        print("全被験者データを統合しました。箱ひげ図を作成します...")
+        boxplots = generate_box_plots_from_long_df(combined_df, result_root, filename_prefix="AllSubjects")
+
         return {
             'output_path': output_path,
             'subjects': sorted(included_subjects),
-            'rows': len(combined_df)
+            'rows': len(combined_df),
+            'boxplots': boxplots
         }
 
     def run_callback(input_dir):

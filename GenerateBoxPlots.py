@@ -35,6 +35,13 @@ colors = {
 # グラフ描画関数
 # ---------------------------------------------------------
 
+def _condition_palette(labels):
+    palette = {}
+    for label in labels:
+        palette[label] = colors.get(label, 'lightgray')
+    return palette
+
+
 def create_boxplot_for_metric(df, metric_suffix, title, output_filename, output_dir):
     """
     指定された指標（LF/HF または RMSSD）の箱ひげ図を作成して保存する
@@ -77,18 +84,19 @@ def create_boxplot_for_metric(df, metric_suffix, title, output_filename, output_
     
     # 1. 箱ひげ図
     # showfliers=False: 箱ひげ図には外れ値を表示せず、全体傾向を強調する
+    palette = _condition_palette(df_melted['Condition'].unique())
     sns.boxplot(
         x='Condition', 
         y='Value', 
         data=df_melted, 
-        palette=colors, 
+        palette=palette, 
         ax=ax, 
         showfliers=False,
         width=0.5
     )
     
     # 凡例の作成
-    legend_patches = [mpatches.Patch(color=color, label=label) for label, color in colors.items() if label in plot_data.columns]
+    legend_patches = [mpatches.Patch(color=color, label=label) for label, color in palette.items() if label in plot_data.columns]
     ax.legend(handles=legend_patches, title="条件", loc='upper right')
 
     # ラベルとタイトルの設定
@@ -150,6 +158,71 @@ def generate_box_plots(input_file_path=None, output_dir=None):
 
     print("\nすべてのグラフ作成が完了しました。")
     return saved_files
+
+
+def _create_boxplot_for_long_df(df, metric_col, title, output_filename, output_dir):
+    if 'Condition' not in df.columns or metric_col not in df.columns:
+        print(f"警告: 長形式データに必要な列がありません ({metric_col})")
+        return None
+
+    plot_df = df[['Condition', metric_col]].dropna().copy()
+    if plot_df.empty:
+        print(f"警告: 長形式データに {metric_col} の有効な値がありません。")
+        return None
+
+    plot_df['ConditionLabel'] = plot_df['Condition'].map(conditions).fillna(plot_df['Condition'])
+    palette = _condition_palette(plot_df['ConditionLabel'].unique())
+
+    fig, ax = plt.subplots(figsize=(10, 7))
+    sns.boxplot(
+        x='ConditionLabel',
+        y=metric_col,
+        data=plot_df,
+        palette=palette,
+        ax=ax,
+        showfliers=False,
+        width=0.5
+    )
+
+    legend_patches = [mpatches.Patch(color=palette[label], label=label) for label in plot_df['ConditionLabel'].unique()]
+    ax.legend(handles=legend_patches, title="条件", loc='upper right')
+    ax.set_title(title, fontsize=16)
+    ax.set_xlabel("条件", fontsize=14)
+    ax.set_ylabel(metric_col, fontsize=14)
+    ax.grid(axis='y', linestyle='--', alpha=0.7)
+
+    save_path = os.path.join(output_dir, output_filename)
+    plt.tight_layout()
+    plt.savefig(save_path, dpi=300)
+    plt.close()
+    print(f"保存完了: {save_path}")
+    return save_path
+
+
+def generate_box_plots_from_long_df(df, output_dir, filename_prefix="AllSubjects"):
+    os.makedirs(output_dir, exist_ok=True)
+    saved = []
+    lf = _create_boxplot_for_long_df(
+        df,
+        metric_col='LF/HF',
+        title='LF/HFの比較（全被験者）',
+        output_filename=f'{filename_prefix}_LFHF_Boxplot.png',
+        output_dir=output_dir
+    )
+    if lf:
+        saved.append(lf)
+
+    rmssd = _create_boxplot_for_long_df(
+        df,
+        metric_col='RMSSD',
+        title='RMSSDの比較（全被験者）',
+        output_filename=f'{filename_prefix}_RMSSD_Boxplot.png',
+        output_dir=output_dir
+    )
+    if rmssd:
+        saved.append(rmssd)
+
+    return saved
 
 # ---------------------------------------------------------
 # メイン処理
