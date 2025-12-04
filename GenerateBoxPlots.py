@@ -11,10 +11,10 @@ import os
 
 # 読み込むデータファイルのパス
 # ※ 前回のスクリプトで生成された "Combined_HRV_Analysis.xlsx" のパスを指定してください
-input_file_path = "/Users/user/Research/Analys/result_batch/Combined_HRV_Analysis.xlsx"
+DEFAULT_INPUT_FILE_PATH = "/Users/user/Research/Analys/result_batch/Combined_HRV_Analysis.xlsx"
 
 # 保存先のディレクトリ（指定がなければ入力ファイルと同じ場所）
-output_dir = os.path.dirname(input_file_path)
+DEFAULT_OUTPUT_DIR = os.path.dirname(DEFAULT_INPUT_FILE_PATH)
 
 # 条件と列名の対応定義
 # Excelの列名に含まれるキーワード (key) と、グラフに表示する日本語ラベル (label)
@@ -35,7 +35,7 @@ colors = {
 # グラフ描画関数
 # ---------------------------------------------------------
 
-def create_boxplot_for_metric(df, metric_suffix, title, output_filename):
+def create_boxplot_for_metric(df, metric_suffix, title, output_filename, output_dir):
     """
     指定された指標（LF/HF または RMSSD）の箱ひげ図を作成して保存する
     
@@ -116,41 +116,60 @@ def create_boxplot_for_metric(df, metric_suffix, title, output_filename):
     plt.savefig(save_path, dpi=300)
     print(f"保存完了: {save_path}")
     plt.close() # メモリ解放
+    return save_path
+
+
+def generate_box_plots(input_file_path=None, output_dir=None):
+    """
+    Combined_HRV_Analysis.xlsx を読み込み、LF/HF と RMSSD の箱ひげ図を生成する。
+    
+    :param input_file_path: 結合済みExcelファイルのパス
+    :param output_dir: 図を保存するディレクトリ
+    :return: 作成したファイルのパスリスト
+    """
+    input_file_path = input_file_path or DEFAULT_INPUT_FILE_PATH
+    output_dir = output_dir or os.path.dirname(input_file_path)
+
+    if not os.path.exists(input_file_path):
+        raise FileNotFoundError(f"ファイルが見つかりません: {input_file_path}")
+
+    os.makedirs(output_dir, exist_ok=True)
+
+    # データの読み込み
+    df = pd.read_excel(input_file_path)
+    print("データの読み込みに成功しました。")
+
+    saved_files = []
+
+    lf_path = create_boxplot_for_metric(
+            df,
+            metric_suffix='_LF/HF',
+            title='LF/HFの比較（時系列分布）',
+            output_filename='LFHF_Boxplot.png',
+            output_dir=output_dir
+        )
+    if lf_path:
+        saved_files.append(lf_path)
+
+    rmssd_path = create_boxplot_for_metric(
+            df,
+            metric_suffix='_RMSSD',
+            title='RMSSDの比較（時系列分布）',
+            output_filename='RMSSD_Boxplot.png',
+            output_dir=output_dir
+        )
+    if rmssd_path:
+        saved_files.append(rmssd_path)
+
+    print("\nすべてのグラフ作成が完了しました。")
+    return saved_files
 
 # ---------------------------------------------------------
 # メイン処理
 # ---------------------------------------------------------
 
 if __name__ == "__main__":
-    # ファイルの存在確認
-    if not os.path.exists(input_file_path):
-        print(f"エラー: ファイルが見つかりません -> {input_file_path}")
-        print("パスが正しいか、またはBatchAnalysisECG.pyを実行してファイルが生成されているか確認してください。")
-        exit()
-
-    # データの読み込み
     try:
-        df = pd.read_excel(input_file_path)
-        print("データの読み込みに成功しました。")
-    except Exception as e:
-        print(f"データの読み込みに失敗しました: {e}")
-        exit()
-
-    # 1. LF/HF の箱ひげ図作成
-    # BatchAnalysisECG.pyの出力列名は 'Fixed_LF/HF' などになっているため、サフィックスは '_LF/HF'
-    create_boxplot_for_metric(
-        df, 
-        metric_suffix='_LF/HF', 
-        title='LF/HFの比較（時系列分布）', 
-        output_filename='LFHF_Boxplot.png'
-    )
-
-    # 2. RMSSD の箱ひげ図作成
-    create_boxplot_for_metric(
-        df, 
-        metric_suffix='_RMSSD', 
-        title='RMSSDの比較（時系列分布）', 
-        output_filename='RMSSD_Boxplot.png'
-    )
-
-    print("\nすべてのグラフ作成が完了しました。")
+        generate_box_plots(DEFAULT_INPUT_FILE_PATH, DEFAULT_OUTPUT_DIR)
+    except Exception as exc:
+        print(f"箱ひげ図の作成に失敗しました: {exc}")
