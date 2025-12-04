@@ -55,6 +55,9 @@ class AnalysisGUI:
         )
         status_label.grid(row=len(self.labels) + 2, column=0, columnspan=3, padx=10, sticky="w")
 
+        self.exit_button = tk.Button(self.master, text="終了", command=self.master.destroy)
+        self.exit_button.grid(row=len(self.labels) + 3, column=1, pady=(5, 10))
+
     def _browse_file(self, label):
         file_path = filedialog.askopenfilename(
             title=f"Select file for {label}",
