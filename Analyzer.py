@@ -1,296 +1,155 @@
+# Analyzer.py
+"""バッチ解析モジュール
+
+複数のECGファイルを一括で解析し、結果を統合・保存する。
+HCS_ver4.0の解析機能を参考にブラッシュアップ。
+"""
+
+import os
+import re
+
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
-from scipy.signal import butter, find_peaks, filtfilt, windows
-import scipy.signal
-from itertools import accumulate
-from scipy import interpolate
-import os
+from matplotlib.figure import Figure
+from matplotlib.backends.backend_agg import FigureCanvasAgg
+import matplotlib.patches as mpatches
+import seaborn as sns
+try:
+    import japanize_matplotlib  # noqa: F401
+except ImportError:
+    pass
+
+from AnalysisECG import (
+    calculate_hrv_indices,
+    plot_hrv_from_dataframe,
+    ECG_CONDITIONS,
+    CONDITION_LABELS,
+    CONDITION_COLORS,
+)
+
 
 # ---------------------------------------------------------
-# 1. 信号処理・RRI算出ロジック
+# ファイル名パターン定義
 # ---------------------------------------------------------
+_FILENAME_COND_PATTERN = "|".join(ECG_CONDITIONS)
+FILENAME_PATTERN = re.compile(
+    rf"h10_ecg_session_No(?P<subject>\d+)_\d{{8}}_\d{{6}}_(?P<condition>{_FILENAME_COND_PATTERN})\.csv$",
+    re.IGNORECASE,
+)
 
-def bandpass_filter(signal, fs):
-    """バンドパスフィルタ (0.5Hz - 50Hz)"""
-    lowcut = 0.5
-    highcut = 50
-    nyq = 0.5 * fs
-    low = lowcut / nyq
-    high = highcut / nyq
-    b, a = butter(5, [low, high], btype='band')
-    return filtfilt(b, a, signal)
+# 条件名の正規化マップ
+CONDITION_MAP = {
+    "sin": "Sin",
+    "fixed": "Fixed",
+    "hrf": "HRF",
+    "hrf2_pid": "HRF2_PID",
+    "hrf2_adaptive": "HRF2_Adaptive",
+    "hrf2_gs": "HRF2_GS",
+    "hrf2_gainscheduled": "HRF2_GS",
+    "hrf2_robust": "HRF2_Robust",
+}
 
-def ecg_to_rri(file_path, fs=130):
-    """
-    ECGデータからRRIを算出する。
-    データの長さに応じて、全期間解析するか5分間切り出しを行うかを自動判定する。
-    """
-    try:
-        # ヘッダーなし、1列目(timestamp)と3列目(ecg)を使用
-        data = pd.read_csv(file_path, delimiter=',', encoding="utf-8", skiprows=1, header=None, usecols=[0, 2], names=['timestamp', 'ecg'])
-    except ValueError:
-        print(f"エラー: {os.path.basename(file_path)} の読み込みに失敗しました。")
-        return np.array([]), None, None
-
-    # タイムスタンプ変換
-    data['timestamp'] = pd.to_datetime(data['timestamp'])
-    
-    start_time_real = data['timestamp'].iloc[0]
-    end_time_real = data['timestamp'].iloc[-1]
-    duration_seconds = (end_time_real - start_time_real).total_seconds()
-
-    # --- データ長に応じた期間設定 ---
-    if duration_seconds < 60:
-        # 1分未満の短いサンプルデータの場合は、全期間を使用
-        print(f"  -> 短いデータを検出 ({duration_seconds:.1f}秒): 全期間を解析します")
-        analysis_start_time = start_time_real
-        analysis_end_time = end_time_real
-        data_filtered = data
-    else:
-        # 十分な長さがある場合は、安定する30秒後から5分間を使用（従来ロジック）
-        print(f"  -> 長いデータを検出 ({duration_seconds:.1f}秒): 30秒後から5分間を解析します")
-        analysis_start_time = start_time_real + pd.Timedelta(seconds=30)
-        analysis_end_time = start_time_real + pd.Timedelta(minutes=5, seconds=30)
-        data_filtered = data[(data['timestamp'] >= analysis_start_time) & (data['timestamp'] <= analysis_end_time)]
-
-    if data_filtered.empty:
-        print("  -> エラー: 解析対象期間のデータが空です。")
-        return np.array([]), None, None
-
-    ecg_data = data_filtered['ecg'].values
-
-    # ピーク検出処理
-    filtered_ecg = bandpass_filter(ecg_data, fs)
-    diff_ecg = np.diff(filtered_ecg)
-    squared_ecg = diff_ecg ** 2
-    window_size = int(0.150 * fs)
-    integrated_ecg = np.convolve(squared_ecg, np.ones(window_size) / window_size, mode='same')
-    
-    # しきい値設定
-    height_threshold = np.mean(integrated_ecg) * 0.4
-    distance = fs * 0.3
-    peaks, _ = find_peaks(integrated_ecg, distance=distance, height=height_threshold)
-    
-    rri_data = np.diff(peaks) * 1000 / fs # ms単位
-
-    return rri_data, analysis_start_time, analysis_end_time
 
 # ---------------------------------------------------------
-# 2. HRV指標計算ロジック
+# バッチ解析関数
 # ---------------------------------------------------------
 
-def calculate_hrv_indices(file_path, label, fs=130):
-    """
-    指定されたファイルを解析し、
-    1. 時系列データのDataFrame（Time, LF/HF, RMSSD）
-    2. 全体（5分間）のLF/HF値
-    を返す。
-    """
-    print(f"--- 解析開始: {label} ({os.path.basename(file_path)}) ---")
-    rri_data, start_time, end_time = ecg_to_rri(file_path, fs)
+def run_batch_analysis(
+    files_map,
+    output_dir,
+    analysis_start_offset=None,
+    analysis_end_offset=None,
+    sensor_sample_rate=130.0,
+    resampling_freq=1.0,
+    quantile_low=0.038,
+    quantile_high=0.962,
+    min_hr=45.0,
+    max_hr=210.0,
+    analysis_window_seconds=30.0,
+    subject_id=None,
+    save_plots=True,
+):
+    """バッチ解析を実行し、結果をExcelファイルに保存する
 
-    if len(rri_data) == 0:
-        return None, None
-
-    # 時間軸の作成とリサンプリング (1Hz)
-    time_data = list(accumulate(rri_data / 1000))
-    if not time_data:
-        return None, None
-    
-    resampling_freq = 1
-    duration_total = int(time_data[-1])
-    time = np.arange(0, duration_total, 1 / resampling_freq)
-
-    # スプライン補間
-    if len(time_data) < 4: # データ点が少なすぎる場合の保護
-        print("  -> データ点が少なすぎるためスキップします。")
-        return None, None
-        
-    spline_func = interpolate.interp1d(time_data, rri_data, fill_value="extrapolate", kind='cubic')
-    rri = spline_func(time)
-
-    # --- 前処理・フィルタリング ---
-    # 外れ値除去
-    if len(rri) > 10:
-        low_threshold = np.quantile(rri, 0.038)
-        high_threshold = np.quantile(rri, 0.962)
-        rri[(rri < low_threshold) | (rri > high_threshold)] = np.nan
-
-    # 欠損値補間
-    df_temp = pd.DataFrame(data=rri, index=time, columns=["rri"])
-    df_temp.interpolate(method='spline', order=3, inplace=True, limit_direction='both')
-    rri = df_temp["rri"].values
-
-    # 心拍数制限 (45-210 bpm)
-    MinHR, MaxHR = 45, 210
-    rri[(rri > 60000 / MinHR) | (rri < 60000 / MaxHR)] = np.nan
-    df_temp = pd.DataFrame(data=rri, index=time, columns=["rri"])
-    df_temp.interpolate(method='spline', order=3, inplace=True, limit_direction='both')
-    rri = df_temp["rri"].values
-
-    # 急激な変化の抑制
-    if len(rri) > 1:
-        prerri = np.roll(rri, 1)
-        prerri[0] = rri[0]
-        # 0除算防止
-        safe_prerri = np.where(prerri == 0, 1, prerri)
-        change_ratio = rri / safe_prerri
-        rri[(change_ratio < 0.7) | (change_ratio > 1.3)] = np.nan
-        df_temp = pd.DataFrame(data=rri, index=time, columns=["rri"])
-        df_temp.interpolate(method='spline', order=3, inplace=True, limit_direction='both')
-        rri = df_temp["rri"].values
-
-    # --- [A] 全体（5分間）のLF/HF計算 ---
-    N_total = len(rri)
-    dt_total = 1 / resampling_freq
-    window_total = scipy.signal.windows.hann(N_total)
-    F_total = np.fft.fft(rri * window_total)
-    freq_total = np.fft.fftfreq(N_total, d=dt_total)
-    Amp_total = np.abs(F_total / (N_total / 2))
-
-    lf_mask_total = (freq_total >= 0.04) & (freq_total < 0.15)
-    hf_mask_total = (freq_total >= 0.15) & (freq_total < 0.4)
-    LF_total = np.sum(Amp_total[lf_mask_total])
-    HF_total = np.sum(Amp_total[hf_mask_total])
-    
-    overall_lf_hf_val = LF_total / HF_total if HF_total != 0 else 0
-    print(f"  -> 全体LF/HF値: {overall_lf_hf_val:.4f}")
-
-    # --- [B] スライディングウィンドウ解析 ---
-    # データ長に応じてウィンドウサイズを調整（通常は30秒）
-    if len(rri) >= 30:
-        analysis_window = 30
-    elif len(rri) >= 10:
-        analysis_window = 10 # 短いサンプル用
-        print(f"  -> データが短いため、ウィンドウサイズを {analysis_window}秒 に短縮して解析します。")
-    else:
-        print("  -> データが短すぎて解析できません（10秒未満）。")
-        return None, None
-
-    LF_HF_sliding = []
-    RMSSD_sliding = []
-    time_points = []
-    
-    i = 0
-    # 1秒ずつスライド
-    while i <= (len(rri) - analysis_window):
-        rri_window = rri[i : analysis_window + i]
-        
-        # --- LF/HF計算 ---
-        N = len(rri_window)
-        dt = 1 / resampling_freq
-        
-        # ハニング窓
-        window = scipy.signal.windows.hann(N)
-        F = np.fft.fft(rri_window * window)
-        freq = np.fft.fftfreq(N, d=dt)
-        Amp = np.abs(F / (N / 2))
-        
-        lf_mask = (freq >= 0.04) & (freq < 0.15)
-        hf_mask = (freq >= 0.15) & (freq < 0.4)
-        
-        LF = np.sum(Amp[lf_mask])
-        HF = np.sum(Amp[hf_mask])
-        
-        lf_hf_val = LF / HF if HF != 0 else 0
-        LF_HF_sliding.append(lf_hf_val)
-
-        # --- RMSSD計算 ---
-        if len(rri_window) > 1:
-            diff_rri = np.diff(rri_window)
-            mssd = np.mean(np.square(diff_rri))
-            rmssd_val = np.sqrt(mssd)
-            RMSSD_sliding.append(rmssd_val)
-        else:
-            RMSSD_sliding.append(np.nan)
-            
-        time_points.append(i)
-        i += 1
-
-    # 結果をDataFrameに格納
-    sliding_result_df = pd.DataFrame({
-        'Time': time_points,
-        'LF/HF': LF_HF_sliding,
-        'RMSSD': RMSSD_sliding
-    })
-    
-    return sliding_result_df, overall_lf_hf_val
-
-# ---------------------------------------------------------
-# 3. バッチ解析実行ロジック
-# ---------------------------------------------------------
-def save_timeseries_plot(df, label, output_dir):
-    """
-    Creates and saves a time-series plot for LF/HF and RMSSD.
-    """
-    print(f"  -> Creating time-series plot for {label}...")
-    fig, axes = plt.subplots(2, 1, figsize=(12, 8), sharex=True)
-    fig.suptitle(f'Time-Series Analysis: {label}', fontsize=16)
-
-    # Plot LF/HF
-    axes[0].plot(df['Time'], df['LF/HF'], label='LF/HF', color='dodgerblue')
-    axes[0].set_ylabel('LF/HF')
-    axes[0].grid(True, linestyle='--', alpha=0.6)
-    axes[0].legend()
-
-    # Plot RMSSD
-    axes[1].plot(df['Time'], df['RMSSD'], label='RMSSD', color='limegreen')
-    axes[1].set_ylabel('RMSSD (ms)')
-    axes[1].set_xlabel('Time (s)')
-    axes[1].grid(True, linestyle='--', alpha=0.6)
-    axes[1].legend()
-
-    plt.tight_layout(rect=[0, 0.03, 1, 0.95]) # Adjust layout to make room for suptitle
-    
-    save_path = os.path.join(output_dir, f"{label}_timeseries.png")
-    plt.savefig(save_path, dpi=300)
-    plt.close(fig)
-    print(f"  -> Time-series plot saved: {os.path.basename(save_path)}")
-
-
-def run_batch_analysis(files_map, output_dir):
-    """
-    指定されたファイルマップに基づいてバッチ解析を実行し、結果をExcelファイルに保存する。
-    
-    :param files_map: 解析対象のファイルを {label: file_path} の形式で格納した辞書
-    :param output_dir: 結果を出力するディレクトリ
+    Args:
+        files_map: 解析対象のファイルを {label: file_path} の形式で格納した辞書
+        output_dir: 結果を出力するディレクトリ
+        analysis_start_offset: 解析開始オフセット（秒）
+        analysis_end_offset: 解析終了オフセット（秒）
+        sensor_sample_rate: センサーのサンプリング周波数
+        resampling_freq: リサンプリング周波数
+        quantile_low: 外れ値除去の下限パーセンタイル
+        quantile_high: 外れ値除去の上限パーセンタイル
+        min_hr: 最小心拍数制限
+        max_hr: 最大心拍数制限
+        analysis_window_seconds: スライディングウィンドウの秒数
+        subject_id: 被験者ID（出力ファイル名に含める。Noneの場合はフォルダ名から推測）
+        save_plots: 時系列グラフを保存するか
     """
     os.makedirs(output_dir, exist_ok=True)
-    
     combined_df = None
 
     print("=== バッチ解析を開始します ===")
 
+    # subject_idが指定されていない場合、出力フォルダ名から推測
+    if subject_id is None:
+        folder_name = os.path.basename(output_dir.rstrip('/\\'))
+        # No1, No2 などのパターンをチェック
+        match = re.match(r'(No\d+)', folder_name, re.IGNORECASE)
+        if match:
+            subject_id = match.group(1)
+        else:
+            subject_id = folder_name
+
     for label, filename in files_map.items():
         file_path = filename
-        
+
         if not os.path.exists(file_path):
             print(f"警告: ファイルが見つかりません -> {file_path}")
             continue
-            
+
         # 解析実行
-        sliding_df, overall_lfhf = calculate_hrv_indices(file_path, label)
-        
+        sliding_df, overall_lfhf = calculate_hrv_indices(
+            file_path,
+            label,
+            fs=int(sensor_sample_rate),
+            analysis_start_offset=analysis_start_offset,
+            analysis_end_offset=analysis_end_offset,
+            resampling_freq=resampling_freq,
+            quantile_low=quantile_low,
+            quantile_high=quantile_high,
+            min_hr=min_hr,
+            max_hr=max_hr,
+            analysis_window_seconds=analysis_window_seconds,
+        )
+
         if sliding_df is not None and not sliding_df.empty:
-            # 時系列データの個別保存
-            sliding_output_path = os.path.join(output_dir, f"{label}_result.xlsx")
+            # 時系列データの個別保存（被験者番号を含むファイル名）
+            sliding_output_path = os.path.join(output_dir, f"{subject_id}_{label}_result.xlsx")
             sliding_df.to_excel(sliding_output_path, index=False)
             print(f"  -> 時系列結果を保存: {os.path.basename(sliding_output_path)}")
 
             # 時系列グラフの保存
-            save_timeseries_plot(sliding_df, label, output_dir)
+            if save_plots:
+                plot_hrv_from_dataframe(sliding_df, f"{subject_id}_{label}", output_dir)
 
             # 全体LF/HFの個別保存
-            overall_output_path = os.path.join(output_dir, f"{label}_resultLFHF5min.xlsx")
-            overall_df = pd.DataFrame({'File Name': [filename], 'LF/HF (Overall)': [overall_lfhf]})
-            overall_df.to_excel(overall_output_path, index=False)
+            overall_output_path = os.path.join(output_dir, f"{subject_id}_{label}_resultLFHF5min.xlsx")
+            overall_df_file = pd.DataFrame({
+                'File Name': [filename],
+                'LF/HF (Overall)': [overall_lfhf]
+            })
+            overall_df_file.to_excel(overall_output_path, index=False)
             print(f"  -> 全体平均結果を保存: {os.path.basename(overall_output_path)}")
-            
-            # 結合用データの準備
+
+            # 結合用データの準備（SDNN列も追加）
             df_renamed = sliding_df.copy()
-            df_renamed.columns = ['Time', f'{label}_LF/HF', f'{label}_RMSSD']
-            
+            if 'SDNN' in df_renamed.columns:
+                df_renamed.columns = ['Time', f'{label}_LF/HF', f'{label}_RMSSD', f'{label}_SDNN']
+            else:
+                df_renamed.columns = ['Time', f'{label}_LF/HF', f'{label}_RMSSD']
+
             if combined_df is None:
                 combined_df = df_renamed
             else:
@@ -306,9 +165,11 @@ def run_batch_analysis(files_map, output_dir):
             if f'{label}_LF/HF' in combined_df.columns:
                 cols.append(f'{label}_LF/HF')
                 cols.append(f'{label}_RMSSD')
-        
+                if f'{label}_SDNN' in combined_df.columns:
+                    cols.append(f'{label}_SDNN')
+
         combined_df = combined_df[cols]
-        combined_output_path = os.path.join(output_dir, "Combined_HRV_Analysis.xlsx")
+        combined_output_path = os.path.join(output_dir, f"{subject_id}_Combined_HRV_Analysis.xlsx")
         combined_df.to_excel(combined_output_path, index=False)
         print(f"\n=== 全データの結合ファイルを保存しました ===")
         print(f"保存先: {combined_output_path}")
@@ -317,22 +178,292 @@ def run_batch_analysis(files_map, output_dir):
 
     print("\n処理完了。")
 
+
 # ---------------------------------------------------------
-# 4. メイン実行ブロック
+# 箱ひげ図生成関数
+# ---------------------------------------------------------
+
+def generate_box_plots(
+    input_file_path,
+    output_dir,
+    condition_labels=None,
+    condition_order=None,
+):
+    """箱ひげ図を生成する
+
+    Args:
+        input_file_path: 入力ファイルパス（結合済みHRV解析結果のExcel）
+        output_dir: 出力ディレクトリ
+        condition_labels: 条件ラベルのマッピング辞書
+        condition_order: 条件の表示順序リスト
+
+    Returns:
+        保存されたファイルパスのリスト
+    """
+    condition_labels = condition_labels or CONDITION_LABELS
+    condition_order = condition_order or ECG_CONDITIONS
+    colors = CONDITION_COLORS
+
+    if not os.path.exists(input_file_path):
+        raise FileNotFoundError(f"ファイルが見つかりません: {input_file_path}")
+
+    os.makedirs(output_dir, exist_ok=True)
+    df = pd.read_excel(input_file_path)
+    print("データの読み込みに成功しました。")
+
+    saved_files = []
+
+    for metric_suffix, title, output_filename in [
+        ('_LF/HF', 'LF/HFの比較（時系列分布）', 'LFHF_Boxplot.png'),
+        ('_RMSSD', 'RMSSDの比較（時系列分布）', 'RMSSD_Boxplot.png'),
+        ('_SDNN', 'SDNNの比較（時系列分布）', 'SDNN_Boxplot.png')
+    ]:
+        print(f"--- {title} のグラフを作成中 ---")
+        plot_data = pd.DataFrame()
+        found_cols = False
+
+        for eng_key, display_label in condition_labels.items():
+            col_name = f"{eng_key}{metric_suffix}"
+            if col_name in df.columns:
+                label = display_label or eng_key
+                plot_data[label] = df[col_name]
+                found_cols = True
+
+        if not found_cols:
+            print(f"  -> {metric_suffix} に関するデータが見つかりませんでした。スキップします。")
+            continue
+
+        df_melted = plot_data.melt(var_name='Condition', value_name='Value')
+        df_melted = df_melted.dropna()
+
+        # Aggバックエンドを使用（スレッドセーフ）
+        fig = Figure(figsize=(10, 7))
+        canvas = FigureCanvasAgg(fig)
+        ax = fig.add_subplot(111)
+
+        # 表示順序の決定
+        available_labels = set(df_melted['Condition'])
+        order_labels = []
+        for cond in condition_order:
+            label = condition_labels.get(cond)
+            if label and label in available_labels:
+                order_labels.append(label)
+        if not order_labels:
+            order_labels = list(df_melted['Condition'].unique())
+
+        # パレットの設定
+        palette = {}
+        for cond in condition_order:
+            label = condition_labels.get(cond)
+            if label and label in order_labels:
+                palette[label] = colors.get(cond, 'lightgray')
+        for label in order_labels:
+            if label not in palette:
+                palette[label] = 'lightgray'
+
+        sns.boxplot(
+            x='Condition',
+            y='Value',
+            data=df_melted,
+            palette=palette,
+            ax=ax,
+            showfliers=False,
+            width=0.5,
+            order=order_labels
+        )
+
+        # 凡例
+        legend_patches = [
+            mpatches.Patch(color=palette[label], label=label)
+            for label in order_labels
+        ]
+        ax.legend(handles=legend_patches, title="条件", loc='upper right')
+        ax.set_title(title, fontsize=16)
+        ax.set_ylabel(metric_suffix.replace('_', ''), fontsize=14)
+        ax.set_xlabel("条件", fontsize=14)
+        ax.grid(axis='y', linestyle='--', alpha=0.7)
+
+        save_path = os.path.join(output_dir, output_filename)
+        fig.tight_layout()
+        fig.savefig(save_path, dpi=300)
+        print(f"  -> 保存完了: {save_path}")
+        saved_files.append(save_path)
+
+    print("\nすべてのグラフ作成が完了しました。")
+    return saved_files
+
+
+# ---------------------------------------------------------
+# 複数被験者の統計比較
+# ---------------------------------------------------------
+
+def compare_subjects(
+    data_dir,
+    output_dir,
+    conditions=None,
+    metrics=None,
+):
+    """複数被験者のデータを比較する
+
+    Args:
+        data_dir: 被験者データを含むディレクトリ
+        output_dir: 出力ディレクトリ
+        conditions: 比較する条件のリスト（Noneの場合は全条件）
+        metrics: 比較する指標のリスト（Noneの場合は['LF/HF', 'RMSSD', 'SDNN']）
+
+    Returns:
+        比較結果のDataFrame
+    """
+    conditions = conditions or ECG_CONDITIONS
+    metrics = metrics or ['LF/HF', 'RMSSD', 'SDNN']
+
+    os.makedirs(output_dir, exist_ok=True)
+
+    # 結合ファイルを検索
+    combined_files = []
+    for root, dirs, files in os.walk(data_dir):
+        for f in files:
+            if f.endswith('_Combined_HRV_Analysis.xlsx'):
+                combined_files.append(os.path.join(root, f))
+
+    if not combined_files:
+        print("結合ファイルが見つかりませんでした。")
+        return None
+
+    # 各被験者のデータを集約
+    summary_data = []
+
+    for file_path in combined_files:
+        # ファイル名から被験者IDを抽出
+        filename = os.path.basename(file_path)
+        match = re.match(r'(No\d+)', filename, re.IGNORECASE)
+        if match:
+            subject_id = match.group(1)
+        else:
+            subject_id = os.path.splitext(filename)[0].replace('_Combined_HRV_Analysis', '')
+
+        try:
+            df = pd.read_excel(file_path)
+        except Exception as e:
+            print(f"警告: {file_path} の読み込みに失敗しました: {e}")
+            continue
+
+        row = {'Subject': subject_id}
+
+        for cond in conditions:
+            for metric in metrics:
+                col_name = f"{cond}_{metric}"
+                if col_name in df.columns:
+                    # 平均値と標準偏差を計算
+                    values = df[col_name].dropna()
+                    if len(values) > 0:
+                        row[f"{cond}_{metric}_mean"] = values.mean()
+                        row[f"{cond}_{metric}_std"] = values.std()
+
+        summary_data.append(row)
+
+    if not summary_data:
+        print("有効なデータが見つかりませんでした。")
+        return None
+
+    summary_df = pd.DataFrame(summary_data)
+    summary_df.sort_values('Subject', inplace=True)
+
+    # 結果を保存
+    output_path = os.path.join(output_dir, "Subject_Comparison.xlsx")
+    summary_df.to_excel(output_path, index=False)
+    print(f"被験者比較結果を保存しました: {output_path}")
+
+    return summary_df
+
+
+# ---------------------------------------------------------
+# 統計サマリー生成
+# ---------------------------------------------------------
+
+def generate_summary_statistics(
+    input_file_path,
+    output_dir,
+    conditions=None,
+):
+    """統計サマリーを生成する
+
+    Args:
+        input_file_path: 結合済みHRV解析結果のExcelファイル
+        output_dir: 出力ディレクトリ
+        conditions: 比較する条件のリスト
+
+    Returns:
+        サマリーのDataFrame
+    """
+    conditions = conditions or ECG_CONDITIONS
+
+    if not os.path.exists(input_file_path):
+        raise FileNotFoundError(f"ファイルが見つかりません: {input_file_path}")
+
+    os.makedirs(output_dir, exist_ok=True)
+    df = pd.read_excel(input_file_path)
+
+    summary_data = []
+
+    for cond in conditions:
+        for metric_suffix in ['_LF/HF', '_RMSSD', '_SDNN']:
+            col_name = f"{cond}{metric_suffix}"
+            if col_name in df.columns:
+                values = df[col_name].dropna()
+                if len(values) > 0:
+                    summary_data.append({
+                        'Condition': cond,
+                        'Metric': metric_suffix.replace('_', ''),
+                        'N': len(values),
+                        'Mean': values.mean(),
+                        'Std': values.std(),
+                        'Min': values.min(),
+                        'Max': values.max(),
+                        'Median': values.median(),
+                        'Q1': values.quantile(0.25),
+                        'Q3': values.quantile(0.75),
+                    })
+
+    if not summary_data:
+        print("統計サマリーを生成するデータがありませんでした。")
+        return None
+
+    summary_df = pd.DataFrame(summary_data)
+
+    # 結果を保存
+    output_path = os.path.join(output_dir, "Statistics_Summary.xlsx")
+    summary_df.to_excel(output_path, index=False)
+    print(f"統計サマリーを保存しました: {output_path}")
+
+    return summary_df
+
+
+# ---------------------------------------------------------
+# メイン実行ブロック
 # ---------------------------------------------------------
 
 if __name__ == "__main__":
-    # このスクリプトを直接実行した場合のデフォルト動作
-    # ▼▼▼ 環境設定: ここを自分のPCのパスに合わせて変更してください ▼▼▼
     base_dir_main = os.path.dirname(os.path.abspath(__file__))
-    
-    # 入力ファイル名（フォルダ内にあるファイル名を指定）
+
+    # 入力ファイル設定
     default_files_map = {
         "Fixed": "/Users/user/Documents/MHS2025/kawato/h10_ecg_session_20250728_162632.csv",
-        "HRF":   "/Users/user/Documents/MHS2025/kawato/h10_ecg_session_20250728_161705.csv",
-        "Sin":   "/Users/user/Documents/MHS2025/kawato/h10_ecg_session_20250728_160807.csv"
+        "HRF": "/Users/user/Documents/MHS2025/kawato/h10_ecg_session_20250728_161705.csv",
+        "Sin": "/Users/user/Documents/MHS2025/kawato/h10_ecg_session_20250728_160807.csv"
     }
-    # ▲▲▲ 設定ここまで ▲▲▲
 
     default_output_dir = os.path.join(base_dir_main, "result_batch")
-    run_batch_analysis(default_files_map, default_output_dir)
+
+    # バッチ解析実行
+    run_batch_analysis(
+        default_files_map,
+        default_output_dir,
+        subject_id="No1",
+    )
+
+    # 箱ひげ図生成（結合ファイルが存在する場合）
+    combined_file = os.path.join(default_output_dir, "No1_Combined_HRV_Analysis.xlsx")
+    if os.path.exists(combined_file):
+        generate_box_plots(combined_file, default_output_dir)
+        generate_summary_statistics(combined_file, default_output_dir)

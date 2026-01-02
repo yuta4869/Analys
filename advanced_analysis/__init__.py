@@ -8,14 +8,25 @@
 - 相関分析 (correlation)
 """
 
-from .control_metrics import ControlMetricsAnalyzer
-from .advanced_hrv import AdvancedHRVAnalyzer
-from .statistics import StatisticalAnalyzer
-from .correlation import CorrelationAnalyzer
+from .control_metrics import ControlMetrics, ControlMetricsAnalyzer
+from .advanced_hrv import AdvancedHRVMetrics, AdvancedHRVAnalyzer
+from .statistics import ANOVAResult, TTestResult, FriedmanResult, StatisticalAnalyzer
+from .correlation import CorrelationResult, RegressionResult, CorrelationAnalyzer
 
 __all__ = [
+    # 制御性能
+    'ControlMetrics',
     'ControlMetricsAnalyzer',
+    # HRV解析
+    'AdvancedHRVMetrics',
     'AdvancedHRVAnalyzer',
+    # 統計検定
+    'ANOVAResult',
+    'TTestResult',
+    'FriedmanResult',
     'StatisticalAnalyzer',
+    # 相関分析
+    'CorrelationResult',
+    'RegressionResult',
     'CorrelationAnalyzer',
 ]
